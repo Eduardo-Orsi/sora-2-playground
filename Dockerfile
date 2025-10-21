@@ -1,34 +1,47 @@
-FROM node:25-alpine AS deps
+FROM node:20-alpine AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-COPY package.json package-lock.json* pnpm-lock.yaml* bun.lock* ./
+# Enable corepack for pnpm/yarn support
+RUN corepack enable
+
+COPY package.json package-lock.json* pnpm-lock.yaml* yarn.lock* bun.lockb* ./
+
 RUN \
-  if [ -f bun.lock ]; then \
-    corepack enable bun && bun install --frozen-lockfile; \
-  elif [ -f pnpm-lock.yaml ]; then \
-    corepack enable pnpm && pnpm install --frozen-lockfile; \
-  else \
+  if [ -f yarn.lock ]; then \
+    yarn --frozen-lockfile; \
+  elif [ -f package-lock.json ]; then \
     npm ci; \
+  elif [ -f pnpm-lock.yaml ]; then \
+    pnpm i --frozen-lockfile; \
+  else \
+    echo "No lockfile found." && exit 1; \
   fi
 
-FROM node:25-alpine AS builder
+FROM node:20-alpine AS builder
+RUN apk add --no-cache libc6-compat
 WORKDIR /app
+
+# Enable corepack for the builder stage too
+RUN corepack enable
+
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN \
-  if [ -f bun.lock ]; then \
-    corepack enable bun && bun run build; \
+  if [ -f yarn.lock ]; then \
+    yarn build; \
+  elif [ -f package-lock.json ]; then \
+    npm run build; \
   elif [ -f pnpm-lock.yaml ]; then \
-    corepack enable pnpm && pnpm run build; \
+    pnpm run build; \
   else \
     npm run build; \
   fi
 
-FROM node:25-alpine AS runner
+FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
