@@ -46,12 +46,14 @@ const getStoredApiKey = (): string | null => {
     return localStorage.getItem('openaiApiKey');
 };
 
-let effectiveStorageModeClient: 'fs' | 'indexeddb';
+let effectiveStorageModeClient: 'fs' | 'indexeddb' | 'r2';
 
 // Frontend mode always uses indexeddb (no backend filesystem available)
 if (isFrontendModeEnabled) {
     effectiveStorageModeClient = 'indexeddb';
     console.log('Frontend mode enabled - forcing indexeddb storage');
+} else if (explicitModeClient === 'r2') {
+    effectiveStorageModeClient = 'r2';
 } else if (isOnVercelClient && explicitModeClient === 'fs') {
     // Prevent fs mode on Vercel (filesystem is read-only/ephemeral)
     console.warn('fs mode is not supported on Vercel, forcing indexeddb mode');
@@ -63,7 +65,7 @@ if (isFrontendModeEnabled) {
 } else if (isOnVercelClient) {
     effectiveStorageModeClient = 'indexeddb';
 } else {
-    effectiveStorageModeClient = 'fs';
+    effectiveStorageModeClient = 'r2';
 }
 
 console.log(
@@ -129,36 +131,92 @@ export default function HomePage() {
 
     const allDbVideos = useLiveQuery<VideoRecord[] | undefined>(() => db.videos.toArray(), []);
 
-    // Load history from localStorage
-    React.useEffect(() => {
+    const fetchHistory = React.useCallback(async () => {
+        if (isFrontendModeEnabled || apiMode === 'frontend') {
+            return;
+        }
+
+        if (isPasswordRequiredByBackend === null) {
+            return;
+        }
+
+        if (isPasswordRequiredByBackend && !clientPasswordHash) {
+            return;
+        }
+
         try {
-            const storedHistory = localStorage.getItem('soraVideoHistory');
-            if (storedHistory) {
-                const parsedHistory: VideoMetadata[] = JSON.parse(storedHistory);
-                if (Array.isArray(parsedHistory)) {
-                    setHistory(parsedHistory);
-                } else {
-                    console.warn('Invalid history data found in localStorage.');
+            const response = await fetch('/api/video-history', {
+                headers: clientPasswordHash ? { 'x-password-hash': clientPasswordHash } : {}
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch video history');
+            }
+
+            const data = await response.json();
+            if (Array.isArray(data.items)) {
+                setHistory(data.items);
+            }
+        } catch (err) {
+            console.error('Failed to fetch video history:', err);
+            setError(err instanceof Error ? err.message : 'Failed to fetch video history');
+        } finally {
+            setIsInitialLoad(false);
+        }
+    }, [apiMode, clientPasswordHash, isPasswordRequiredByBackend]);
+
+    // Load history for current mode
+    React.useEffect(() => {
+        let cancelled = false;
+
+        const load = async () => {
+            if (isFrontendModeEnabled || apiMode === 'frontend') {
+                try {
+                    const storedHistory = localStorage.getItem('soraVideoHistory');
+                    if (storedHistory) {
+                        const parsedHistory: VideoMetadata[] = JSON.parse(storedHistory);
+                        if (Array.isArray(parsedHistory)) {
+                            setHistory(parsedHistory);
+                        } else {
+                            console.warn('Invalid history data found in localStorage.');
+                            localStorage.removeItem('soraVideoHistory');
+                        }
+                    } else {
+                        setHistory([]);
+                    }
+                } catch (e) {
+                    console.error('Failed to load or parse history from localStorage:', e);
                     localStorage.removeItem('soraVideoHistory');
+                } finally {
+                    if (!cancelled) {
+                        setIsInitialLoad(false);
+                    }
+                }
+                return;
+            }
+
+            await fetchHistory();
+        };
+
+        load();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [apiMode, fetchHistory]);
+
+    // Save history to localStorage when running purely in frontend mode
+    React.useEffect(() => {
+        if (isFrontendModeEnabled || apiMode === 'frontend') {
+            if (!isInitialLoad) {
+                try {
+                    localStorage.setItem('soraVideoHistory', JSON.stringify(history));
+                } catch (e) {
+                    console.error('Failed to save history to localStorage:', e);
                 }
             }
-        } catch (e) {
-            console.error('Failed to load or parse history from localStorage:', e);
-            localStorage.removeItem('soraVideoHistory');
         }
-        setIsInitialLoad(false);
-    }, []);
-
-    // Save history to localStorage
-    React.useEffect(() => {
-        if (!isInitialLoad) {
-            try {
-                localStorage.setItem('soraVideoHistory', JSON.stringify(history));
-            } catch (e) {
-                console.error('Failed to save history to localStorage:', e);
-            }
-        }
-    }, [history, isInitialLoad]);
+    }, [history, isInitialLoad, apiMode]);
 
     // Check password requirement and validate stored hash
     React.useEffect(() => {
@@ -356,6 +414,10 @@ export default function HomePage() {
                 return undefined;
             }
 
+            if (historyItem?.videoUrl) {
+                return historyItem.videoUrl;
+            }
+
             // Check cache first
             if (videoSrcCache.has(id)) {
                 return videoSrcCache.get(id);
@@ -401,6 +463,10 @@ export default function HomePage() {
             const historyItem = history.find(h => h.id === id);
             if (historyItem?.status === 'failed' || historyItem?.status === 'processing') {
                 return undefined;
+            }
+
+            if (historyItem?.thumbnailUrl) {
+                return historyItem.thumbnailUrl;
             }
 
             // Check IndexedDB (always used in frontend mode and indexeddb storage mode)
@@ -496,11 +562,32 @@ export default function HomePage() {
                             setHistory(prev =>
                                 prev.map(item => {
                                     if (item.id === jobId) {
+                                        const nextStatus =
+                                            jobUpdate.status === 'completed'
+                                                ? 'completed'
+                                                : jobUpdate.status === 'failed'
+                                                    ? 'failed'
+                                                    : 'processing';
                                         return {
                                             ...item,
-                                            progress: jobUpdate.progress,
-                                            status: jobUpdate.status === 'completed' ? 'completed' :
-                                                   jobUpdate.status === 'failed' ? 'failed' : 'processing'
+                                            progress: jobUpdate.progress ?? item.progress ?? 0,
+                                            status: nextStatus,
+                                            storageModeUsed:
+                                                jobUpdate.storageModeUsed !== undefined
+                                                    ? jobUpdate.storageModeUsed
+                                                    : item.storageModeUsed,
+                                            videoUrl: jobUpdate.videoUrl ?? item.videoUrl,
+                                            thumbnailUrl: jobUpdate.thumbnailUrl ?? item.thumbnailUrl,
+                                            spritesheetUrl: jobUpdate.spritesheetUrl ?? item.spritesheetUrl,
+                                            durationMs:
+                                                jobUpdate.durationMs !== undefined && jobUpdate.durationMs !== null
+                                                    ? jobUpdate.durationMs
+                                                    : item.durationMs,
+                                            costDetails:
+                                                jobUpdate.costDetails !== undefined
+                                                    ? jobUpdate.costDetails
+                                                    : item.costDetails,
+                                            completedAt: jobUpdate.completedAt ?? item.completedAt
                                         };
                                     }
                                     return item;
@@ -538,7 +625,10 @@ export default function HomePage() {
                                                 ...item,
                                                 status: 'failed',
                                                 error: jobUpdate.error?.message || 'Video generation failed',
-                                                costDetails: null // No cost for failed videos
+                                                costDetails: null,
+                                                videoUrl: undefined,
+                                                thumbnailUrl: undefined,
+                                                spritesheetUrl: undefined
                                             };
                                         }
                                         return item;
@@ -625,6 +715,37 @@ export default function HomePage() {
     }, [isInitialLoad]);
 
     const downloadAndStoreVideo = async (job: VideoJob) => {
+        console.log(`Handling completed video job: ${job.id}`);
+
+        if (effectiveStorageModeClient !== 'indexeddb') {
+            setHistory(prev =>
+                prev.map(item => {
+                    if (item.id === job.id) {
+                        const fallbackDuration = Math.max(Date.now() - job.created_at * 1000, 0);
+                        return {
+                            ...item,
+                            status: 'completed',
+                            storageModeUsed: job.storageModeUsed ?? item.storageModeUsed ?? 'r2',
+                            videoUrl: job.videoUrl ?? item.videoUrl,
+                            thumbnailUrl: job.thumbnailUrl ?? item.thumbnailUrl,
+                            spritesheetUrl: job.spritesheetUrl ?? item.spritesheetUrl,
+                            durationMs:
+                                job.durationMs !== undefined && job.durationMs !== null
+                                    ? job.durationMs
+                                    : item.durationMs ?? fallbackDuration,
+                            completedAt: job.completedAt ?? item.completedAt
+                        };
+                    }
+                    return item;
+                })
+            );
+
+            if (!isFrontendModeEnabled && apiMode === 'backend') {
+                await fetchHistory();
+            }
+            return;
+        }
+
         console.log(`Downloading video for job: ${job.id}`);
 
         try {
@@ -784,11 +905,14 @@ export default function HomePage() {
             setCurrentJobId(job.id);
 
             // Calculate cost immediately
-            const costDetails = calculateVideoCost({
-                model: job.model,
-                size: job.size,
-                seconds: parseInt(job.seconds)
-            });
+            const costDetails =
+                job.costDetails !== undefined
+                    ? job.costDetails
+                    : calculateVideoCost({
+                          model: job.model,
+                          size: job.size,
+                          seconds: parseInt(job.seconds)
+                      });
 
             // Add to history immediately with queued status
             const newHistoryEntry: VideoMetadata = {
@@ -905,11 +1029,14 @@ export default function HomePage() {
             setCurrentJobId(job.id);
 
             // Calculate cost immediately
-            const costDetails = calculateVideoCost({
-                model: job.model,
-                size: job.size,
-                seconds: parseInt(job.seconds)
-            });
+            const costDetails =
+                job.costDetails !== undefined
+                    ? job.costDetails
+                    : calculateVideoCost({
+                          model: job.model,
+                          size: job.size,
+                          seconds: parseInt(job.seconds)
+                      });
 
             // Add to history immediately with queued status
             const newHistoryEntry: VideoMetadata = {
@@ -991,7 +1118,9 @@ export default function HomePage() {
         const confirmationMessage =
             effectiveStorageModeClient === 'indexeddb'
                 ? 'Are you sure you want to clear the entire video history? This will delete all stored videos from your browser (IndexedDB) but will NOT delete them from OpenAI servers. This cannot be undone.'
-                : 'Are you sure you want to clear the entire video history? This only clears your local history and does NOT delete videos from OpenAI servers. This cannot be undone.';
+                : effectiveStorageModeClient === 'r2'
+                    ? 'Are you sure you want to clear the entire video history? This removes the entries from the shared database but keeps any files stored in R2. This cannot be undone.'
+                    : 'Are you sure you want to clear the entire video history? This only clears your local history and does NOT delete videos from OpenAI servers. This cannot be undone.';
 
         if (window.confirm(confirmationMessage)) {
             setHistory([]);
@@ -1000,17 +1129,43 @@ export default function HomePage() {
             setError(null);
 
             try {
-                localStorage.removeItem('soraVideoHistory');
-                console.log('Cleared history metadata from localStorage.');
+                saveActiveJobIds(new Map());
 
                 if (effectiveStorageModeClient === 'indexeddb') {
+                    localStorage.removeItem('soraVideoHistory');
+                    console.log('Cleared history metadata from localStorage.');
+
                     await db.videos.clear();
                     console.log('Cleared videos from IndexedDB.');
                     setVideoSrcCache(new Map());
+                } else if (effectiveStorageModeClient === 'r2') {
+                    const response = await fetch('/api/video-history', {
+                        method: 'DELETE',
+                        headers: clientPasswordHash ? { 'x-password-hash': clientPasswordHash } : {}
+                    });
+
+                    if (!response.ok) {
+                        throw new Error('Failed to clear server-side history');
+                    }
                 }
             } catch (e) {
                 console.error('Failed during history clearing:', e);
                 setError(`Failed to clear history: ${e instanceof Error ? e.message : String(e)}`);
+                if (isFrontendModeEnabled || apiMode === 'frontend') {
+                    try {
+                        const storedHistory = localStorage.getItem('soraVideoHistory');
+                        if (storedHistory) {
+                            const parsed: VideoMetadata[] = JSON.parse(storedHistory);
+                            if (Array.isArray(parsed)) {
+                                setHistory(parsed);
+                            }
+                        }
+                } catch {
+                    // ignore
+                }
+                } else {
+                    await fetchHistory();
+                }
             }
         }
     };

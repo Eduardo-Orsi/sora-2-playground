@@ -62,11 +62,11 @@ A web-based playground to interact with OpenAI's Sora 2 models for creating vide
 *   **🎥 Video Output Panel:** View generated videos with built-in player controls, progress slider, and playback controls.
 *   **🚀 Send to Remix:** Quickly send any completed video (including remixes) to the remix form for further modifications.
 *   **📥 Video Download:** Download generated videos directly to your device.
-*   **💾 Storage:** Supports two modes via `NEXT_PUBLIC_FILE_STORAGE_MODE`:
-    *   **Filesystem (default):** Videos saved to `./generated-videos` on the server (includes video, thumbnail, and spritesheet).
-    *   **IndexedDB:** Videos saved directly in the browser's IndexedDB (ideal for serverless deployments like Vercel).
-    *   Video history metadata is always saved in the browser's local storage.
-    *   Active job IDs are persisted - resume polling automatically after page refresh.
+*   **💾 Storage:** Controlled by `NEXT_PUBLIC_FILE_STORAGE_MODE`:
+    *   **R2 (default):** Completed assets are uploaded to Cloudflare R2 and metadata is persisted in Postgres.
+    *   **Filesystem:** Videos saved to `./generated-videos` on the server (includes video, thumbnail, and spritesheet).
+    *   **IndexedDB:** Videos saved directly in the browser (ideal for frontend-only builds).
+    *   Active job IDs are persisted so queued renders resume polling after refresh.
 
 ## 🔀 Deployment Modes
 
@@ -76,7 +76,7 @@ This playground supports two deployment architectures depending on your needs:
 |---------|--------------|---------------|
 | **OpenAI API Key Location** | Server-side (single shared key) | Client-side (user-supplied) |
 | **Password Protection** | ✅ Supported via `APP_PASSWORD` | ❌ Not supported |
-| **Storage** | Local disk or IndexedDB | IndexedDB only |
+| **Storage** | Cloudflare R2 (default) or local disk | IndexedDB only |
 | **Build Output** | Dynamic (includes API routes) | Static HTML/CSS/JS export |
 | **User Setup** | None (admin configures) | Each user provides their own API key |
 
@@ -137,6 +137,28 @@ When `APP_PASSWORD` is set, the application will prompt for authentication on pa
   <em>Password protection dialog (backend mode)</em>
 </p>
 
+#### Postgres + Cloudflare R2 (backend storage)
+
+Backend mode now writes history to Postgres and stores completed assets in Cloudflare R2. Set the following variables:
+
+```dotenv
+DATABASE_URL=postgres://user:password@host:5432/dbname
+R2_ACCOUNT_ID=your_account_id
+R2_ACCESS_KEY_ID=your_access_key
+R2_SECRET_ACCESS_KEY=your_secret
+R2_BUCKET_NAME=your_bucket
+R2_PUBLIC_BASE_URL=https://<account>.r2.cloudflarestorage.com/<bucket>
+NEXT_PUBLIC_FILE_STORAGE_MODE=r2
+```
+
+After updating `.env.local`, run:
+
+```bash
+npm run db:push
+```
+
+This bootstraps the `video_history` table so new jobs can be recorded.
+
 #### Frontend-only Mode (Static)
 
 Want to run everything purely in the browser and let each user supply their own API key? Enable frontend mode:
@@ -163,14 +185,15 @@ NEXT_PUBLIC_ENABLE_FRONTEND_MODE=true
 Configure where generated videos are stored:
 
 ```dotenv
-NEXT_PUBLIC_FILE_STORAGE_MODE=fs  # or indexeddb
+NEXT_PUBLIC_FILE_STORAGE_MODE=r2  # or fs/indexeddb
 ```
 
 **Defaults:**
-- **Local deployments:** `fs` (filesystem) - Videos saved to `./generated-videos` directory (includes video, thumbnail, and spritesheet files)
-- **Vercel deployments:** `indexeddb` (browser storage) - Videos stored in your browser's IndexedDB
+- **Local deployments:** `r2` (Cloudflare R2) when credentials are present, otherwise `fs`.
+- **Vercel deployments:** `indexeddb` (browser storage) unless the required R2 credentials are set.
 
 **Available modes:**
+- **`r2` (Cloudflare R2):** Videos are proxied through the backend, uploaded to your configured bucket, and referenced from Postgres.
 - **`fs` (filesystem):** Videos saved to the server's `./generated-videos` directory. Only works for local deployments or hosting with persistent filesystem.
 - **`indexeddb` (browser storage):** Videos downloaded from OpenAI and stored in the browser's IndexedDB. Ideal for serverless/ephemeral environments.
 
@@ -270,6 +293,9 @@ Runs entirely in the browser. Each visitor pastes their own OpenAI API key, ever
 
 - `OPENAI_API_KEY` *(required)* – stored server-side and used for all video operations.
 - `APP_PASSWORD` *(required during setup)* – adds a password prompt to the UI. Remove it later in Vercel settings if you want the site open.
+- `DATABASE_URL` *(required)* – Postgres connection string for persisting job history.
+- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET_NAME`, `R2_PUBLIC_BASE_URL` – credentials for Cloudflare R2 uploads.
+- `NEXT_PUBLIC_FILE_STORAGE_MODE` – set to `r2` when using the shared storage backend.
 
 **Frontend mode** button prompts for:
 
@@ -291,10 +317,10 @@ If you want your deployment protected by Vercel team authentication instead of b
 
 ### Post-Deployment:
 
-- Videos are automatically stored in your browser's IndexedDB (no server storage)
-- Frontend mode prompts each visitor for their OpenAI API key; backend mode uses the server key you set during deployment
-- You can add, modify, or remove environment variables anytime in Vercel Project Settings
-- You can add a custom domain in Vercel Project Settings → Domains
+- With `NEXT_PUBLIC_FILE_STORAGE_MODE=r2`, completed videos are saved to your R2 bucket and served via the URLs stored in Postgres. Otherwise the app falls back to browser IndexedDB.
+- Frontend mode prompts each visitor for their OpenAI API key; backend mode uses the server key you set during deployment.
+- You can add, modify, or remove environment variables anytime in Vercel Project Settings.
+- You can add a custom domain in Vercel Project Settings → Domains.
 
 ## 🤝 Contributing
 

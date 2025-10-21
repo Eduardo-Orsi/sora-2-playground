@@ -19,6 +19,7 @@ import {
     Sparkles as SparklesIcon,
     HardDrive,
     Database,
+    Cloud,
     Trash2,
     RefreshCw,
     Loader2
@@ -183,6 +184,25 @@ export function VideoHistoryPanel({
                             const thumbnailUrl = getThumbnailSrc ? getThumbnailSrc(item.id) : undefined;
                             const videoUrl = getVideoSrc(item.id);
                             const originalStorageMode = item.storageModeUsed || 'fs';
+                            const storageIndicator = (() => {
+                                switch (originalStorageMode) {
+                                    case 'indexeddb':
+                                        return {
+                                            icon: <Database size={12} className='text-blue-400' />,
+                                            label: 'db'
+                                        };
+                                    case 'r2':
+                                        return {
+                                            icon: <Cloud size={12} className='text-teal-300' />,
+                                            label: 'r2'
+                                        };
+                                    default:
+                                        return {
+                                            icon: <HardDrive size={12} className='text-neutral-400' />,
+                                            label: 'file'
+                                        };
+                                }
+                            })();
                             const job = activeJobs?.get(item.id);
                             const isProcessing = item.status === 'processing' || (job && (job.status === 'queued' || job.status === 'in_progress'));
                             const isFailed = item.status === 'failed' || (job && job.status === 'failed');
@@ -240,12 +260,8 @@ export function VideoHistoryPanel({
                                             </div>
                                             <div className='pointer-events-none absolute bottom-1 left-1 z-10 flex items-center gap-1'>
                                                 <div className='flex items-center gap-1 rounded-full border border-white/10 bg-neutral-900/80 px-1 py-0.5 text-[11px] text-white/70'>
-                                                    {originalStorageMode === 'fs' ? (
-                                                        <HardDrive size={12} className='text-neutral-400' />
-                                                    ) : (
-                                                        <Database size={12} className='text-blue-400' />
-                                                    )}
-                                                    <span>{originalStorageMode === 'fs' ? 'file' : 'db'}</span>
+                                                    {storageIndicator.icon}
+                                                    <span>{storageIndicator.label}</span>
                                                 </div>
                                                 <div className='flex items-center gap-1 rounded-full border border-white/10 bg-neutral-900/80 px-1 py-0.5 text-[11px] text-white/70'>
                                                     <span>{item.seconds}s</span>

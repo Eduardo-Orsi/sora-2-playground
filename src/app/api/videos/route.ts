@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import { calculateVideoCost } from '@/lib/cost-utils';
+import { upsertVideoRecord } from '@/lib/server/video-history';
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
@@ -70,6 +72,23 @@ export async function POST(request: NextRequest) {
 
         console.log('Video job created:', video.id, 'status:', video.status);
 
+        await upsertVideoRecord({
+            id: video.id,
+            mode: 'create',
+            prompt,
+            model: video.model,
+            size: video.size,
+            seconds: video.seconds,
+            progress: video.progress ?? 0,
+            jobCreatedAt: video.created_at
+        });
+
+        const costDetails = calculateVideoCost({
+            model: video.model,
+            size: video.size,
+            seconds: Number(video.seconds)
+        });
+
         // Return job metadata
         return NextResponse.json({
             id: video.id,
@@ -79,7 +98,8 @@ export async function POST(request: NextRequest) {
             size: video.size,
             seconds: video.seconds,
             created_at: video.created_at,
-            object: video.object
+            object: video.object,
+            costDetails
         });
     } catch (error: unknown) {
         console.error('Error in /api/videos POST:', error);

@@ -16,13 +16,20 @@ export type VideoJob = {
         code?: string;
     };
     remix_of?: string;
+    videoUrl?: string;
+    thumbnailUrl?: string;
+    spritesheetUrl?: string;
+    storageModeUsed?: 'fs' | 'indexeddb' | 'r2';
+    costDetails?: CostDetails | null;
+    durationMs?: number | null;
+    completedAt?: string;
 };
 
 export type VideoMetadata = {
     id: string;
     timestamp: number;
     filename: string;
-    storageModeUsed?: 'fs' | 'indexeddb';
+    storageModeUsed?: 'fs' | 'indexeddb' | 'r2';
     durationMs: number;
     model: VideoModel;
     size: VideoSize;
@@ -34,6 +41,10 @@ export type VideoMetadata = {
     status?: 'processing' | 'completed' | 'failed';
     error?: string;
     progress?: number;
+    videoUrl?: string;
+    thumbnailUrl?: string;
+    spritesheetUrl?: string;
+    completedAt?: string;
 };
 
 export type VideoJobCreate = {

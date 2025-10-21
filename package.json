@@ -9,9 +9,13 @@
     "build:frontend": "node scripts/build-frontend.js",
     "start": "next start",
     "lint": "next lint",
-    "format": "prettier --write \"src/**/*.{ts,tsx}\""
+    "format": "prettier --write \"src/**/*.{ts,tsx}\"",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:push": "drizzle-kit push"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.744.0",
     "@radix-ui/react-checkbox": "^1.3.2",
     "@radix-ui/react-dialog": "^1.1.11",
     "@radix-ui/react-label": "^2.1.4",
@@ -24,15 +28,18 @@
     "@radix-ui/react-toggle-group": "^1.1.7",
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tailwindcss/vite": "^4.1.4",
+    "@types/pg": "^8.15.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dexie": "^4.0.11",
     "dexie-react-hooks": "^1.1.7",
+    "drizzle-orm": "^0.39.1",
     "lucide-react": "^0.503.0",
     "mime-types": "^3.0.1",
     "next": "15.3.1",
     "next-themes": "^0.4.6",
     "openai": "^6.2.0",
+    "pg": "^8.13.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwind-merge": "^3.2.0"
@@ -53,7 +60,8 @@
     "prettier-plugin-tailwindcss": "^0.6.11",
     "tailwindcss": "^4.1.4",
     "tw-animate-css": "^1.2.8",
-    "typescript": "^5"
+    "typescript": "^5",
+    "drizzle-kit": "^0.30.6"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
+import { calculateVideoCost } from '@/lib/cost-utils';
+import { upsertVideoRecord } from '@/lib/server/video-history';
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
@@ -50,6 +52,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
         console.log('Remix job created:', video.id, 'status:', video.status);
 
+        await upsertVideoRecord({
+            id: video.id,
+            mode: 'remix',
+            prompt,
+            model: video.model,
+            size: video.size,
+            seconds: video.seconds,
+            progress: video.progress ?? 0,
+            remixOf: id,
+            jobCreatedAt: video.created_at
+        });
+
+        const costDetails = calculateVideoCost({
+            model: video.model,
+            size: video.size,
+            seconds: Number(video.seconds)
+        });
+
         // Return job metadata
         return NextResponse.json({
             id: video.id,
@@ -60,7 +80,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             seconds: video.seconds,
             created_at: video.created_at,
             object: video.object,
-            remix_of: id
+            remix_of: id,
+            costDetails
         });
     } catch (error: unknown) {
         console.error(`Error creating remix for video ${id}:`, error);
