@@ -4,6 +4,7 @@ const isFrontendMode = process.env.NEXT_PUBLIC_ENABLE_FRONTEND_MODE === 'true';
 const isGitHubPages = process.env.GITHUB_PAGES === 'true';
 
 const nextConfig: NextConfig = {
+  output: 'standalone',
   ...(isFrontendMode
     ? {
         output: 'export' as const,

@@ -47,3 +47,6 @@ generated-videos/
 .api-routes-backup/
 
 .env.local.example
+
+pnpm-lock.yaml
+bun.lock
